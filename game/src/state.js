@@ -44,6 +44,8 @@ export const G = {
   radio: [],             // radio callout rows { text, until } — team chatter, kept
                          // separate from the kill feed so callouts stay readable
   boardForced: false,    // staged ?shot= scenes may force the scoreboard visible
+  headless: false,      // ?autostart: no human plays, so the charge always goes
+                        // to a bot and the sim exercises the bot plant path
   banner: null,          // centre-screen message { title, sub, until }
 
   shake: 0,              // camera shake energy, decays in the render loop

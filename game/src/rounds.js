@@ -105,9 +105,16 @@ function startRound() {
   }
 
   // The charge goes to a random Emberline hand, a bot's more often than the player's.
+  // v5: in headless runs (?autostart — the CI/smoke-test mode, where no aiming is
+  // possible) it always goes to a bot, so the simulation exercises the bot plant
+  // path every round instead of stalling whenever the idle player holds the
+  // charge. Normal play keeps the 62/38 split below.
   const atkTeam = G.actors.filter((a) => a.team === 'atk');
   let carrier;
-  if (G.rand() < 0.62) {
+  if (G.headless) {
+    const bots = atkTeam.filter((a) => !a.isPlayer);
+    carrier = bots[Math.floor(G.rand() * bots.length)];
+  } else if (G.rand() < 0.62) {
     const bots = atkTeam.filter((a) => !a.isPlayer);
     carrier = bots[Math.floor(G.rand() * bots.length)];
   } else {

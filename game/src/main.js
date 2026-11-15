@@ -95,6 +95,7 @@ buildMap(scene);
 initFx(scene);
 initViewmodel(camera);
 initHud();
+G.headless = AUTOSTART; // the charge goes to a bot in headless runs (see rounds.js)
 rounds.initMatch(scene, seed);
 
 // Debug/testing handle: the whole game state, for headless smoke tests and tuning.

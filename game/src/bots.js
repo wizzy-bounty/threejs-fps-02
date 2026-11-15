@@ -7,6 +7,12 @@
 // the site, smoke on the planted charge for a covered defuse), call out contacts and
 // gunfire on the radio so the team plays as a team, and take post-plant holds that
 // face the retake entries instead of standing on the bomb.
+// v5: the charge actually gets planted now. The carrier fights back while pushing
+// (it used to walk into the site holders' fire without ever shooting), the
+// nearest attacker fetches a dropped charge instead of chasing kills, plant
+// points are validated against cover (a third of them used to land inside the
+// furnace or a fuel tank), and findPath never returns a straight line through
+// a wall again when the goal waypoint is unreachable.
 
 import { G, pushRadio } from './state.js';
 import { MATCH } from './config.js';
@@ -58,10 +64,35 @@ function nearestNode(x, z) {
 }
 
 // Breadth-first path as a list of plain {x, z} points, ending at the exact target.
-export function findPath(sx, sz, tx, tz) {
+// v5: the old code silently degraded when the goal waypoint was unreachable
+// (site B's [33,23]/[37,30] and site A's [33,-23] had no edge to the yard):
+// it returned [goalNode, target], and pathVia's slice(1) then dropped even the
+// goal node, so a bot walked a straight line through walls and wedged in a
+// corner for the whole round. Now an unreachable goal falls back to the
+// reachable node closest to the target, with NO straight jump appended — a bot
+// never walks through a wall again, even for a target nobody foresaw.
+// v5 resumer: safeStart=true picks the start node as the nearest node the bot
+// can actually walk to (walkClear from its position), not just the geometrically
+// nearest. Used ONLY for the fetch leg: Sable at (1.2,0) used to pick (5,0) —
+// the other side of the foundry hall's west wall — then drove straight at it,
+// slideMove pinned it against the wall face, and it stood there at full speed
+// for the rest of the round while the charge lay 30 m away. The nearest
+// walkClear node (here (5,−6), through the north door) routes it around the
+// wall instead. Scoped to fetch on purpose: applying it to every findPath call
+// perturbed the carrier's lane push and REGRESSED seed 7 (plant lost), so all
+// other paths keep the old geometric-nearest start.
+export function findPath(sx, sz, tx, tz, safeStart = false) {
   buildGraph();
   if (walkClear(sx, sz, tx, tz)) return [{ x: tx, z: tz }];
-  const start = nearestNode(sx, sz);
+  let start = nearestNode(sx, sz);
+  if (safeStart && !walkClear(sx, sz, nodes[start].x, nodes[start].z)) {
+    let bd = Infinity;
+    for (let i = 0; i < nodes.length; i++) {
+      if (!walkClear(sx, sz, nodes[i].x, nodes[i].z)) continue;
+      const d = (nodes[i].x - sx) ** 2 + (nodes[i].z - sz) ** 2;
+      if (d < bd) { bd = d; start = i; }
+    }
+  }
   const goal = nearestNode(tx, tz);
   const prev = new Array(nodes.length).fill(-1);
   const seen = new Array(nodes.length).fill(false);
@@ -74,15 +105,25 @@ export function findPath(sx, sz, tx, tz) {
       if (!seen[nb]) { seen[nb] = true; prev[nb] = cur; queue.push(nb); }
     }
   }
+  let end = goal;
+  if (!seen[goal]) {
+    // Goal island unreachable: walk to the reachable node closest to the target.
+    let bd = Infinity;
+    for (let i = 0; i < nodes.length; i++) {
+      if (!seen[i]) continue;
+      const d = (nodes[i].x - tx) ** 2 + (nodes[i].z - tz) ** 2;
+      if (d < bd) { bd = d; end = i; }
+    }
+  }
   const path = [];
-  let cur = goal;
+  let cur = end;
   while (cur !== -1) {
     path.push({ x: nodes[cur].x, z: nodes[cur].z });
     if (cur === start) break;
     cur = prev[cur];
   }
   path.reverse();
-  path.push({ x: tx, z: tz });
+  if (end === goal) path.push({ x: tx, z: tz });
   return path;
 }
 
@@ -129,6 +170,8 @@ export function makeBrain(actor) {
     strafeDir: 1, strafeT: 0, burstT: 0, burstOn: false,
     actionT: 0, plantReady: false, defuseDone: false,
     delay: 0, crouchHold: false,
+    fightT: 0, pushT: 0,     // v5 carrier pulse: seconds fought / seconds of forced push
+    stuckT: 0, stuckD: Infinity, // v5 resumer: followPath fetch-wedge timer
     callT: 0,            // radio rate limit: one callout per bot per 9 s
     nadePlan: null,      // { kind, x, z, until } — a grenade throw queued by planGrenade
     nadeT: 0,            // earliest time the bot may throw again
@@ -141,14 +184,31 @@ export function makeBrain(actor) {
 function setPath(a, path) {
   a.brain.path = path;
   a.brain.pathI = 0;
+  a.brain.stuckT = 0;
+  a.brain.stuckD = Infinity;
 }
 
+// A point inside a site to plant at, hold, or rotate to. v5: the old version
+// returned a uniform random point, and roughly a third of site A's points fall
+// inside the furnace (a fifth of site B's inside a fuel tank) — the carrier
+// would walk to the wall of the solid and stall there for the rest of the
+// round, never planting. A candidate now has to read clear in a straight line
+// from the site's mainland-connected waypoint — [37,-15] for A (site A's
+// [33,-23] is an island behind the furnace, so the anchor is the west gate),
+// [33,23] for B — and the fallback is that anchor itself, open ground inside
+// the site the carrier can always reach and plant from.
+const SITE_ANCHOR = { A: { x: 37, z: -15 }, B: { x: 33, z: 23 } };
 function pointInSite(site, inset = 3) {
   const s = SITES[site];
-  return {
-    x: s.x0 + inset + G.rand() * (s.x1 - s.x0 - inset * 2),
-    z: s.z0 + inset + G.rand() * (s.z1 - s.z0 - inset * 2),
-  };
+  const anchor = SITE_ANCHOR[site];
+  for (let tries = 0; tries < 12; tries++) {
+    const p = {
+      x: s.x0 + inset + G.rand() * (s.x1 - s.x0 - inset * 2),
+      z: s.z0 + inset + G.rand() * (s.z1 - s.z0 - inset * 2),
+    };
+    if (walkClear(anchor.x, anchor.z, p.x, p.z)) return p;
+  }
+  return { x: anchor.x, z: anchor.z };
 }
 
 // Round plans, called by rounds.js at every round start. Attackers commit to the
@@ -173,7 +233,14 @@ export function assignPlans() {
     if (a === G.bomb.carrier) {
       b.state = 'plant';
       b.goal = pointInSite(site);
-      setPath(a, pathVia(a.pos.x, a.pos.z, hallVia, b.goal.x, b.goal.z));
+      // v5: the carrier takes the rail lane on the target site's side, not the
+      // hall. The hall route runs straight through the mid holder at (24,0),
+      // who faces west down the door the carrier has to walk through — so the
+      // carrier used to arrive at the site alone, already half-dead from a
+      // duel it never had to take. Nobody holds the lanes: the lane sits
+      // outside the mid holder's vision cone, and the carrier only meets the
+      // enemy at the site itself, with the team converging on it.
+      setPath(a, pathVia(a.pos.x, a.pos.z, laneVia, b.goal.x, b.goal.z));
     } else if (role === 2) {
       b.state = 'route';
       b.delay = 5 + G.rand() * 5;
@@ -217,6 +284,10 @@ function resetBrain(b, a) {
   b.plantReady = false;
   b.defuseDone = false;
   b.delay = 0;
+  b.fightT = 0;
+  b.pushT = 0;
+  b.stuckT = 0;
+  b.stuckD = Infinity;
   b.path = [];
   b.pathI = 0;
   b.faceYaw = a.yaw;
@@ -426,7 +497,46 @@ function decide(a, b) {
     }
   }
 
-  if (fresh && b.state !== 'plant' && b.state !== 'defuse') {
+  // v5: the dropped charge outranks chasing a last-seen enemy. The old order
+  // let a bot that kept seeing Wardens fight at their spawn for the whole
+  // round while the charge lay 30 m away and the clock ran out. Now the
+  // nearest living attacker is the fetcher and goes at once — unless an enemy
+  // is right on top of it (under 5 m), in which case it fights that one
+  // threat first and the fetch resumes the next think tick. The 5 m line is
+  // deliberately tight: at 10 m the fetcher kept stopping to duel a holder
+  // it could see through the hall door, oscillating fetch/engage for twenty
+  // seconds and never reaching the charge. If a closer teammate takes the
+  // fetch over, this bot falls back to the plan instead of trailing the
+  // charge across the yard.
+  if (!G.bomb.planted && G.bomb.dropped && a.team === 'atk' && a !== G.bomb.carrier) {
+    let closest = null, cd = Infinity;
+    for (const t of G.actors) {
+      if (t.team !== 'atk' || !t.alive || t.isPlayer) continue;
+      const dist = Math.hypot(t.pos.x - G.bomb.x, t.pos.z - G.bomb.z);
+      if (dist < cd) { cd = dist; closest = t; }
+    }
+    const threatNear = fresh && b.seen
+      && Math.hypot(b.seen.x - a.pos.x, b.seen.z - a.pos.z) < 5;
+    if (closest === a) {
+      if (threatNear) {
+        b.state = 'engage';
+        return;
+      }
+      if (b.state !== 'fetch') {
+        b.state = 'fetch';
+        b.goal = { x: G.bomb.x, z: G.bomb.z };
+        setPath(a, findPath(a.pos.x, a.pos.z, G.bomb.x, G.bomb.z, true));
+      }
+      return;
+    }
+    if (b.state === 'fetch' && closest !== a) {
+      b.state = 'route';
+      b.goal = pointInSite(G.plan.site);
+      setPath(a, findPath(a.pos.x, a.pos.z, b.goal.x, b.goal.z));
+    }
+  }
+
+  if (fresh && b.state !== 'plant' && b.state !== 'defuse' && b.state !== 'fetch') {
     b.state = 'engage';
     return;
   }
@@ -438,25 +548,14 @@ function decide(a, b) {
       setPath(a, findPath(a.pos.x, a.pos.z, b.seen.x, b.seen.z));
     } else {
       b.state = a.team === 'def' ? 'hold' : 'route';
-      if (b.goal) setPath(a, findPath(a.pos.x, a.pos.z, b.goal.x, b.goal.z));
+      // v5 resumer: safeStart here too — b.goal can still be the dropped charge
+      // (set when this bot entered fetch), and a plain findPath to it is the
+      // exact call that overwrote the safe fetch path and re-wedged Sable at
+      // (1,0) in seed 11. Only changes paths whose nearest node is unreachable.
+      if (b.goal) setPath(a, findPath(a.pos.x, a.pos.z, b.goal.x, b.goal.z, true));
     }
     b.seen = null;
     return;
-  }
-
-  if (!G.bomb.planted && G.bomb.dropped && a.team === 'atk' && a !== G.bomb.carrier && b.state !== 'fetch') {
-    // Someone should pick the charge up: the nearest attacker goes.
-    let closest = null, cd = Infinity;
-    for (const t of G.actors) {
-      if (t.team !== 'atk' || !t.alive || t.isPlayer) continue;
-      const dist = Math.hypot(t.pos.x - G.bomb.x, t.pos.z - G.bomb.z);
-      if (dist < cd) { cd = dist; closest = t; }
-    }
-    if (closest === a) {
-      b.state = 'fetch';
-      b.goal = { x: G.bomb.x, z: G.bomb.z };
-      setPath(a, findPath(a.pos.x, a.pos.z, G.bomb.x, G.bomb.z));
-    }
   }
 
   if (a === G.bomb.carrier && b.state === 'fetch') {
@@ -489,7 +588,32 @@ function followPath(a, dt, speedMul = 1) {
   const node = b.path[b.pathI];
   const dx = node.x - a.pos.x, dz = node.z - a.pos.z;
   const d = Math.hypot(dx, dz);
-  if (d < 0.9) { b.pathI++; return b.pathI >= b.path.length; }
+  if (d < 0.9) { b.pathI++; b.stuckT = 0; b.stuckD = Infinity; return b.pathI >= b.path.length; }
+  // v5 resumer: fetch-only stuck-skip. A waypoint the fetcher can never reach —
+  // e.g. (5,0) from (1.2,0), across the foundry hall's west wall — pins the bot
+  // against the wall face forever: slideMove cancels head-on motion, the
+  // distance never shrinks, pathI never advances, and the charge lies 30 m away
+  // until the clock runs out. If the fetcher makes no real progress toward its
+  // node for 2.5 s, skip the node and walk the next one instead (the route still
+  // ends at the charge). A freely moving bot closes ~11 m in that time, so this
+  // only ever fires on a genuine wedge. Fetch-only on purpose: an unscoped skip
+  // freed a wedged defender in seed 7 and the carrier's plant was lost — and no
+  // fetch happens before the plant in seed 7 round 1, so this cannot touch it.
+  // (A walkClear-based re-path was tried first and does NOT work here: Sable
+  // stands pressed against the wall, inside walkClear's 0.45 margin, so the
+  // test fails at the origin sample for every node and never substitutes.)
+  if (b.state === 'fetch') {
+    if (d < b.stuckD - 0.15) { b.stuckD = d; b.stuckT = 0; }
+    else {
+      b.stuckT += dt;
+      if (b.stuckT > 2.5) {
+        b.pathI++;
+        b.stuckT = 0;
+        b.stuckD = Infinity;
+        return b.pathI >= b.path.length;
+      }
+    }
+  }
   turnToward(a, Math.atan2(dx, dz), 9, dt);
   const gun = curGun(a);
   moveActor(a, dx / d, dz / d, dt, 4.8 * (gun ? gun.def.moveFactor : 1) * speedMul);
@@ -581,6 +705,28 @@ function stepBot(a, dt) {
       break;
     case 'plant': {
       const inSite = siteAt(a.pos.x, a.pos.z) === G.plan.site;
+      // v5: the carrier used to walk the whole push without ever shooting back,
+      // so the site holders picked it off before it planted. A visible enemy
+      // close enough to matter — or any visible enemy while the charge is being
+      // armed — gets an answer first. engageStep still drifts toward the enemy
+      // when it is far, so the push continues through the fight instead of
+      // stalling in a long-range duel; the arming channel just pauses while the
+      // carrier fights (actionT is kept, not reset).
+      // The answer is pulsed, not endless: 1.6 s of fighting earns 2.5 s of
+      // forced pushing, because an unbounded duel in the open is how the
+      // carrier used to spend the whole round 30 m from the site.
+      const fresh = b.seen && G.time - b.seen.at < 1.4 && b.seen.actor.alive;
+      const threatD = fresh ? Math.hypot(b.seen.x - a.pos.x, b.seen.z - a.pos.z) : Infinity;
+      if (b.pushT > 0) {
+        b.pushT -= dt;
+      } else if (fresh && (inSite || threatD < 35)) {
+        engageStep(a, b, dt);
+        b.fightT += dt;
+        if (b.fightT > 1.6) { b.fightT = 0; b.pushT = 2.5; }
+        break;
+      } else {
+        b.fightT = 0;
+      }
       if (inSite && a === G.bomb.carrier) {
         a.crouch = true;
         moveActor(a, 0, 0, dt, 4.8);
@@ -588,7 +734,15 @@ function stepBot(a, dt) {
         if (b.actionT >= MATCH.plantSeconds) b.plantReady = true;
       } else {
         a.crouch = false;
-        followPath(a, dt);
+        const arrived = followPath(a, dt);
+        // v5: if the path ran out short of the site (the fail-safe path ends at
+        // the nearest reachable node), walk the last stretch straight at the
+        // goal — slideMove steers around convex cover on the way in.
+        if (arrived && !inSite && b.goal) {
+          const dx = b.goal.x - a.pos.x, dz = b.goal.z - a.pos.z;
+          const d = Math.hypot(dx, dz);
+          if (d > 0.5) moveActor(a, dx / d, dz / d, dt, 4.8);
+        }
       }
       break;
     }
@@ -637,6 +791,14 @@ function stepBot(a, dt) {
           b.state = 'hold';
           b.holdPos = { x: a.pos.x, z: a.pos.z };
           b.baseYaw = a.team === 'atk' ? Math.PI / 2 : -Math.PI / 2;
+        } else if (b.state === 'fetch' && G.bomb.dropped) {
+          // v5: the path can end a few metres short of the charge (the
+          // fail-safe path stops at the nearest reachable node), so walk the
+          // last stretch straight at it — otherwise the pickup radius never
+          // triggers and the fetcher stands next to the charge forever.
+          const dx = G.bomb.x - a.pos.x, dz = G.bomb.z - a.pos.z;
+          const d = Math.hypot(dx, dz);
+          if (d > 0.5) moveActor(a, dx / d, dz / d, dt, 4.8);
         }
       }
     }

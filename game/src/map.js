@@ -134,6 +134,16 @@ export const WAYPOINTS = [
   [24, -13], [24, 13], [33, -23], [37, -15], [45, -28], [33, 23], [37, 30],
   [45, 17], [46, 0], [38, -6], [38, 6], [24, 0], [-3, -25], [-3, 25],
   [24, -24], [24, 24], [-24, -25], [-24, 25], [5, 0], [30, -19], [30, 19],
+  // v5: (30,13), (34,26) and (30,24) reconnect the Tank Depot — waypoints
+  // [33,23]/[37,30] had no edge to the rest of the yard, so findPath silently
+  // degraded to a straight line through the foundry hall's east wall and the
+  // carrier wedged in its corner for the whole round. (30,24) is the link that
+  // actually lands: it threads the gap west of the fuel tank (east of the
+  // boxcar's end), joining [30,19] to [33,23]/[37,30]; (34,26) densifies the
+  // site cluster itself. Site A's [33,-23] stays an island — its pocket sits
+  // behind the furnace and the low wall — so the plant code anchors on the
+  // mainland-connected [37,-15] there instead (see bots.js pointInSite).
+  [30, 13], [34, 26], [30, 24],
 ];
 
 // ---- scene construction -------------------------------------------------------
