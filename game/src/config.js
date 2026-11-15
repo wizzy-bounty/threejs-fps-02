@@ -3,13 +3,16 @@
 
 // Dusk rail-foundry palette. One warm sky, ash ground, teal steel, rust and cream structures,
 // amber for the attacking Emberline, deep teal for the defending Yard Wardens.
+// v4 BRIGHTEN: the v3 cinematic pass went too dark (map/ground near-black in 3 of 4
+// frames), so the palette is lifted a step — ground and haze lighter, sky top less
+// deep — while the dusk identity stays.
 export const PALETTE = {
-  sky: 0x27333f,
+  sky: 0x31424f,
   horizon: 0xe07a3f,
-  fog: 0x9a7a5c,
+  fog: 0xa88a68,
   sun: 0xffb36b,
-  ground: 0x5a5148,
-  groundDark: 0x453e37,
+  ground: 0x6a6055,
+  groundDark: 0x524a41,
   rail: 0x33302c,
   sleeper: 0x4c3b2c,
   steel: 0x4a7a72,

@@ -16,6 +16,8 @@ import { down } from './input.js';
 const el = {};
 let buyOpen = false;
 let feedSig = '';
+let radioSig = '';
+let rosterSig = '';
 let buySig = '';
 let boardSig = '';
 let compassSig = '';
@@ -53,7 +55,8 @@ export function isBuyOpen() {
 
 export function initHud() {
   for (const id of ['timer', 'score-atk', 'score-def', 'round-label', 'hp-fill', 'hp-num', 'armor-num',
-    'ammo-mag', 'ammo-res', 'wep-name', 'money', 'crosshair', 'hitmarker', 'feed', 'banner',
+    'ammo-mag', 'ammo-res', 'wep-name', 'money', 'crosshair', 'hitmarker', 'feed', 'radio', 'radio-rows',
+    'roster', 'roster-atk', 'roster-def', 'banner',
     'banner-title', 'banner-sub', 'buy', 'buy-grid', 'buy-money', 'board', 'board-body',
     'vignette', 'flashfx', 'scopefx', 'interact', 'interact-label', 'interact-fill',
     'bombind', 'bombind-fill', 'bombind-label', 'carrier', 'compass-marks',
@@ -197,16 +200,51 @@ function refreshObjective() {
   el.objective.textContent = text;
 }
 
+// Radio panel: the last three team callouts, on their own — never mixed into
+// the kill feed. A silent panel reads as "no team play", so it stays visible
+// with a header even when no callout is live.
+function refreshRadio() {
+  const radio = G.radio.filter((r) => r.until > G.time);
+  const radioSigNow = radio.map((r) => r.text).join('|');
+  if (radioSigNow !== radioSig) {
+    radioSig = radioSigNow;
+    el['radio-rows'].innerHTML = radio.length
+      ? radio.map((r) => `<div>▸ ${r.text}</div>`).join('')
+      : '<div class="quiet">— radio quiet —</div>';
+  }
+}
+
+// Team roster strip: both squads with alive pips, so the 5v5 reads at a
+// glance without opening the scoreboard. Dead names are struck through.
+function refreshRoster() {
+  const rosterSigNow = G.actors.map((a) => `${a.name}${a.alive ? 1 : 0}`).join('|');
+  if (rosterSigNow !== rosterSig) {
+    rosterSig = rosterSigNow;
+    for (const team of ['atk', 'def']) {
+      const mates = G.actors.filter((a) => a.team === team);
+      const row = mates.map((a) => `<span class="${a.alive ? '' : 'dead'}">${a.isPlayer ? 'You' : a.name} ${a.alive ? '●' : '○'}</span>`).join(' ');
+      el[team === 'atk' ? 'roster-atk' : 'roster-def'].innerHTML =
+        `<b class="t-${team}">${team === 'atk' ? 'EMBERLINE' : 'WARDENS'} ${mates.filter((a) => a.alive).length}</b> ${row}`;
+    }
+  }
+}
+
 export function updateHud() {
   const p = G.player;
   if (!p) return;
 
   if (G.phase !== 'buy' && buyOpen) setBuyOpen(false);
   if (buyOpen) refreshBuy();
-  el.board.hidden = !down.has('Tab');
+  el.board.hidden = !(down.has('Tab') || G.boardForced);
+  el.board.classList.toggle('forced', G.boardForced);
+  // The roster is redundant while the full scoreboard is up — and at 720p the
+  // board's bottom rows would sit on top of it. Hide the strip then.
+  el.roster.hidden = !el.board.hidden;
   if (!el.board.hidden) refreshBoard();
   refreshCompass();
   refreshObjective();
+  refreshRadio();
+  refreshRoster();
 
   el['score-atk'].textContent = G.score.atk;
   el['score-def'].textContent = G.score.def;
@@ -283,10 +321,10 @@ export function updateHud() {
     el['interact-fill'].style.width = `${(G.bomb.plantT / MATCH.plantSeconds) * 100}%`;
   } else el.interact.hidden = true;
 
-  // Planted bomb indicator with the fuse as a draining bar.
+  // Planted bomb indicator with the fuse as a draining bar, seconds included.
   if (G.bomb.planted && (G.phase === 'planted')) {
     el.bombind.hidden = false;
-    el['bombind-label'].textContent = `CHARGE PLANTED — SITE ${G.bomb.site}`;
+    el['bombind-label'].textContent = `CHARGE PLANTED — SITE ${G.bomb.site} · ${fmtTime(G.bomb.fuse)}`;
     el['bombind-fill'].style.width = `${(G.bomb.fuse / MATCH.bombSeconds) * 100}%`;
   } else el.bombind.hidden = true;
 

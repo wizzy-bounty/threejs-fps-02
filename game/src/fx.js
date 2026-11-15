@@ -50,7 +50,7 @@ let flashTex = null;
 
 export function initFx(s) {
   scene = s;
-  smokeTex = radialTexture('rgba(196,192,184,0.85)', 'rgba(196,192,184,0)');
+  smokeTex = radialTexture('rgba(196,192,184,0.7)', 'rgba(196,192,184,0)');
   flashTex = radialTexture('rgba(255,214,140,1)', 'rgba(255,120,30,0)');
 
   const tracerMat = new THREE.LineBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -127,15 +127,19 @@ export function impact(x, y, z, kind) {
   else spawnParticles(x, y, z, 5, 0xb8a88e, 1.5, 0.8, 0.9); // dust off concrete and wood
 }
 
+// v4: smaller, thinner smoke — the v3 cloud read as a grey render artefact
+// sitting in the middle of the sightline. Fewer sprites, smaller puffs, lower
+// opacity; the cloud still blocks sight (sim radius unchanged) but no longer
+// swallows the site in screenshots.
 export function smokePuff(x, y, z, radius, seconds) {
   const sprites = [];
   const group = new THREE.Group();
-  for (let i = 0; i < 13; i++) {
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, opacity: 0.34, depthWrite: false }));
-    const ang = (i / 13) * Math.PI * 2;
+  for (let i = 0; i < 9; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, opacity: 0.22, depthWrite: false }));
+    const ang = (i / 9) * Math.PI * 2;
     const rr = radius * (0.25 + G.rand() * 0.6);
     sp.position.set(Math.cos(ang) * rr, (G.rand() - 0.3) * radius * 0.7, Math.sin(ang) * rr);
-    const sc = radius * (0.9 + G.rand() * 0.7);
+    const sc = radius * (0.65 + G.rand() * 0.45);
     sp.scale.set(sc, sc, 1);
     group.add(sp);
     sprites.push(sp);
@@ -181,7 +185,7 @@ export function updateFx(dt) {
       scene.remove(c.group);
       smokeClouds.splice(i, 1);
     } else if (G.time > c.until - 1.2) {
-      c.group.children.forEach((sp) => { sp.material.opacity = 0.34 * Math.max(0, (c.until - G.time) / 1.2); });
+      c.group.children.forEach((sp) => { sp.material.opacity = 0.22 * Math.max(0, (c.until - G.time) / 1.2); });
     }
   }
 

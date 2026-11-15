@@ -31,7 +31,11 @@ the Tank Depot (site B) and the Wardens hold the yard.
   at both site gates.
 - **A HUD that always says the objective** — a compass strip with both sites and
   their distances, and an objective chip that follows the round (buy plan, carrier,
-  planted charge).
+  planted charge). v4 adds a dedicated radio panel (the last three squad callouts,
+  kept out of the kill feed) and a team roster strip with alive pips, and the
+  planted-charge indicator now shows the fuse countdown. The dusk lighting was
+  lifted a step in v4 (stronger fill, thinner fog) so the map reads bright, and the
+  smoke is smaller and thinner and sits off the main sightline.
 - **No build step, no network** — static ES modules, three.js 0.187.0 vendored,
   synthesised WebAudio sound, a fixed-step simulation kept apart from rendering.
 

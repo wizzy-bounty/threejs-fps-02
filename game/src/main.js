@@ -5,7 +5,7 @@
 // are taken, and it is handy for debugging a pose.
 
 import * as THREE from 'three';
-import { G, setBanner } from './state.js';
+import { G, setBanner, pushRadio, pushFeed } from './state.js';
 import { PALETTE } from './config.js';
 import { buildMap } from './map.js';
 import { initFx, updateFx, smokePuff } from './fx.js';
@@ -33,11 +33,13 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.14;
+renderer.toneMappingExposure = 1.28;
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(PALETTE.fog, 55, 250);
+// v4 BRIGHTEN: fog pushed out (was 55–250) so the map reads as far as v2 did
+// instead of sinking into haze; the dusk mood comes from the palette, not fog.
+scene.fog = new THREE.Fog(PALETTE.fog, 80, 320);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.08, 500);
 scene.add(camera);
@@ -58,9 +60,9 @@ scene.add(camera);
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(340, 24, 12), skyMat));
 }
 
-const hemi = new THREE.HemisphereLight(0xffd9b3, 0x50463c, 1.45);
+const hemi = new THREE.HemisphereLight(0xffd9b3, 0x50463c, 1.95);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffb36b, 2.05);
+const sun = new THREE.DirectionalLight(0xffb36b, 2.5);
 sun.position.set(-48, 62, -30);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -79,13 +81,13 @@ scene.add(sun.target);
 // site A (it flickers, like a real foundry mouth), a cool teal wash over the Tank
 // Depot at site B, and a warm lamp over the foundry hall. No shadows on these;
 // the sun keeps the only shadow map.
-const furnaceLight = new THREE.PointLight(0xff7a2e, 520, 46, 1.8);
+const furnaceLight = new THREE.PointLight(0xff7a2e, 620, 46, 1.8);
 furnaceLight.position.set(41, 7, -26);
 scene.add(furnaceLight);
-const tankLight = new THREE.PointLight(0x7fd4c8, 260, 38, 1.8);
+const tankLight = new THREE.PointLight(0x7fd4c8, 330, 38, 1.8);
 tankLight.position.set(39, 6, 23);
 scene.add(tankLight);
-const hallLight = new THREE.PointLight(0xffc46b, 200, 30, 1.8);
+const hallLight = new THREE.PointLight(0xffc46b, 280, 30, 1.8);
 hallLight.position.set(11, 4.2, 0);
 scene.add(hallLight);
 
@@ -97,6 +99,14 @@ rounds.initMatch(scene, seed);
 
 // Debug/testing handle: the whole game state, for headless smoke tests and tuning.
 window.__ironspur = G;
+
+// Fast-forward the fixed-step sim by N seconds without rendering — headless
+// round-arc tests (buy → execute → plant → round end) run on this, not on
+// wall-clock waits. Gameplay code never calls it.
+window.__advance = (seconds) => {
+  const n = Math.max(0, Math.round(seconds * 60));
+  for (let i = 0; i < n; i++) step(STEP);
+};
 
 // ---- frozen screenshot scenes ------------------------------------------------------
 
@@ -131,6 +141,11 @@ function setupShot(kind) {
     G.score.atk = 2;
     G.score.def = 1;
     p.money = 4750;
+    // Staged team chatter + last round's kill, so the radio panel and the feed
+    // read in the buy frame exactly as they do mid-match.
+    pushRadio('Vex: PLAN — HIT SITE B');
+    pushRadio('Ondo: BUYING CARBINE — 2700');
+    pushFeed('Vex ▸ Hask  ·  M7 Carbine');
     setBanner('ROUND 3', 'Buy phase — B for the buy menu', 9999);
     setBuyOpen(true);
     return;
@@ -144,6 +159,9 @@ function setupShot(kind) {
     G.score.def = 2;
     givePrimary(p, 'carbine');
     p.money = 3200;
+    pushRadio('Vex: CONTACT RAIL LANE NORTH — 2 HOSTILES');
+    pushRadio('Ondo: EXECUTING SITE B — SMOKE OUT');
+    pushFeed('Rurik ▸ Petrov  ·  Longshot .50');
     pose(p, -26, -13.4, Math.PI / 2, { pitch: 0.01 });
     pose(atk[1], -19.5, -11.6, Math.PI / 2);
     pose(atk[2], -29.5, -21.5, Math.PI / 2, { crouch: true });
@@ -184,13 +202,19 @@ function setupShot(kind) {
     givePrimary(p, 'carbine');
     p.hp = 64;
     p.money = 1900;
+    pushRadio('Vex: CHARGE PLANTED SITE A — HOLDING');
+    pushRadio('Sable: HOLDING FURNACE YARD');
+    pushFeed('Vex ▸ Mire  ·  M7 Carbine');
+    pushFeed('Sable ▸ Cobalt  ·  Kestrel-9 SMG');
     pose(p, 27, -13.6, 2.24);
     pose(atk[1], 30.5, -25.5, Math.PI / 2);
     pose(def[0], 45.5, -29.5, -0.76);
     pose(def[1], 34, -22.8, 0, { dead: true });
     pose(def[2], 42.5, -24.5, 0, { dead: true });
-    G.smokes.push({ x: 35, y: 1.3, z: -19.8, r: 3.4, until: 1e9 });
-    smokePuff(35, 1.3, -19.8, 3.4, 9999);
+    // v4: the smoke sits at the far furnace corner of the site now, not in the
+    // middle of the player's sightline — and it is smaller/thinner (fx.js).
+    G.smokes.push({ x: 44.5, y: 1.2, z: -28.5, r: 2.4, until: 1e9 });
+    smokePuff(44.5, 1.2, -28.5, 2.4, 9999);
     setBanner('CHARGE PLANTED', 'Site A — hold the site', 9999);
     return;
   }
@@ -209,6 +233,24 @@ function setupShot(kind) {
   pose(atk[1], 30, -24.8, 2.2);
   pose(def[0], 34, -22.8, 0, { dead: true });
   pose(def[1], 37, -19.8, 0, { dead: true });
+  // v4: the end frame shows the scoreboard (boardForced), and it must read as a
+  // match the bots actually played in — every bot has kills, not just the player
+  // (v3's board showed WIZZY 14, everyone else 0). Kills balance deaths per side.
+  const tally = {
+    You: [6, 2, 5300], Vex: [4, 3, 4100], Ondo: [3, 2, 2900], Rurik: [5, 3, 3600],
+    Sable: [3, 3, 2200], Hask: [3, 5, 2400], Mire: [2, 4, 1500], Cobalt: [4, 3, 3100],
+    Yuna: [1, 5, 1200], Petrov: [3, 4, 2700],
+  };
+  for (const a of G.actors) {
+    const t = tally[a.isPlayer ? 'You' : a.name];
+    if (t) { a.kills = t[0]; a.deaths = t[1]; a.money = t[2]; }
+  }
+  p.money = 5300;
+  G.boardForced = true;
+  pushRadio('Vex: SITE A CLEAR — HOLDING');
+  pushRadio('Ondo: 2 HOSTILES DOWN MID');
+  pushFeed('You ▸ Hask  ·  M7 Carbine');
+  pushFeed('Vex ▸ Yuna  ·  M7 Carbine');
   setBanner('EMBERLINE TAKE THE ROUND', 'The charge detonated — Site A', 9999);
 }
 
@@ -276,7 +318,7 @@ function animate(now) {
 
   // The furnace breathes: its light flickers on the sim clock, which stands still
   // in a frozen ?shot= scene, so screenshots stay deterministic.
-  furnaceLight.intensity = 520 + Math.sin(G.time * 7.3) * 45 + Math.sin(G.time * 13.7) * 25;
+  furnaceLight.intensity = 620 + Math.sin(G.time * 7.3) * 45 + Math.sin(G.time * 13.7) * 25;
 
   if (SHOT) {
     // Frozen scene: draw the posed state, never advance the clock.

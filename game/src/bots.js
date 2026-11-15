@@ -8,7 +8,7 @@
 // gunfire on the radio so the team plays as a team, and take post-plant holds that
 // face the retake entries instead of standing on the bomb.
 
-import { G, pushFeed } from './state.js';
+import { G, pushRadio } from './state.js';
 import { MATCH } from './config.js';
 import { WAYPOINTS, SITES, SOLIDS, RETAKE_ENTRIES, siteAt } from './map.js';
 import { moveActor, sightBlocked } from './physics.js';
@@ -276,7 +276,7 @@ function perceive(a, b) {
           if (Math.hypot(e.pos.x - a.pos.x, e.pos.z - a.pos.z) < 40
             && !sightBlocked(a.pos.x, a.pos.z, e.pos.x, e.pos.z)) n++;
         }
-        pushFeed(`${a.name}: CONTACT ${areaName(best.pos.x, best.pos.z)} — ${Math.max(1, n)} HOSTILE${n > 1 ? 'S' : ''}`);
+        pushRadio(`${a.name}: CONTACT ${areaName(best.pos.x, best.pos.z)} — ${Math.max(1, n)} HOSTILE${n > 1 ? 'S' : ''}`);
         b.callT = G.time + 9;
       }
     }
@@ -295,7 +295,7 @@ function perceive(a, b) {
         if (b.state === 'hold') {
           b.faceYaw = Math.atan2(n.x - a.pos.x, n.z - a.pos.z);
           if (G.time > b.callT) {
-            pushFeed(`${a.name}: SHOTS ${areaName(n.x, n.z)} — HOLDING`);
+            pushRadio(`${a.name}: SHOTS ${areaName(n.x, n.z)} — HOLDING`);
             b.callT = G.time + 9;
           }
         }
