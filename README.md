@@ -20,9 +20,18 @@ the Tank Depot (site B) and the Wardens hold the yard.
 - **Team-plan bots** — nine bots on a waypoint graph with split attack routes (rail
   lane, foundry hall, a late lurker), site holds, vision cones with line-of-sight and
   smoke checks, hearing for gunfire and footsteps, burst-and-strafe engagements,
-  post-plant rotations and defuses.
+  post-plant rotations and defuses. They spend the grenades they buy — smoke to
+  cover a site execute, flash into the site, smoke on the planted charge — call out
+  contacts and gunfire on the radio, and take post-plant holds facing the retake
+  entries.
 - **One map, drawn from one table** — every solid in Ironspur Yard drives both the
   rendered geometry and the collision/vision tests, so what you see is what blocks you.
+  Lit A/B pylons mark the sites, furnace and tank lights warm the dusk, and the
+  ground carries the yard's wear: oil stains, cracks, lane lines and hazard chevrons
+  at both site gates.
+- **A HUD that always says the objective** — a compass strip with both sites and
+  their distances, and an objective chip that follows the round (buy plan, carrier,
+  planted charge).
 - **No build step, no network** — static ES modules, three.js 0.187.0 vendored,
   synthesised WebAudio sound, a fixed-step simulation kept apart from rendering.
 

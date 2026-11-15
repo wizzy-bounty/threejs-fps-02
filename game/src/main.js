@@ -75,6 +75,20 @@ sun.shadow.normalBias = 0.03;
 scene.add(sun);
 scene.add(sun.target);
 
+// v2: three warm site lights so the objective reads at dusk — the furnace glow at
+// site A (it flickers, like a real foundry mouth), a cool teal wash over the Tank
+// Depot at site B, and a warm lamp over the foundry hall. No shadows on these;
+// the sun keeps the only shadow map.
+const furnaceLight = new THREE.PointLight(0xff7a2e, 520, 46, 1.8);
+furnaceLight.position.set(41, 7, -26);
+scene.add(furnaceLight);
+const tankLight = new THREE.PointLight(0x7fd4c8, 260, 38, 1.8);
+tankLight.position.set(39, 6, 23);
+scene.add(tankLight);
+const hallLight = new THREE.PointLight(0xffc46b, 200, 30, 1.8);
+hallLight.position.set(11, 4.2, 0);
+scene.add(hallLight);
+
 buildMap(scene);
 initFx(scene);
 initViewmodel(camera);
@@ -259,6 +273,10 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dtReal = Math.min(0.1, (now - last) / 1000);
   last = now;
+
+  // The furnace breathes: its light flickers on the sim clock, which stands still
+  // in a frozen ?shot= scene, so screenshots stay deterministic.
+  furnaceLight.intensity = 520 + Math.sin(G.time * 7.3) * 45 + Math.sin(G.time * 13.7) * 25;
 
   if (SHOT) {
     // Frozen scene: draw the posed state, never advance the clock.

@@ -98,20 +98,33 @@ function buildVmGun(def) {
     vmBox(0.07, 0.11, 0.24, vmMats.body, 0, 0, -0.1, g);
     vmBox(0.05, 0.05, 0.12, vmMats.dark, 0, 0.045, -0.24, g);
     vmBox(0.06, 0.14, 0.08, vmMats.dark, 0, -0.1, -0.02, g);
+    vmBox(0.02, 0.03, 0.02, vmMats.accent, 0, 0.07, -0.2, g); // front sight
+    vmBox(0.06, 0.03, 0.05, vmMats.dark, 0, 0.06, 0.02, g);   // rear sight
   } else if (def.kind === 'smg') {
     vmBox(0.08, 0.13, 0.4, vmMats.body, 0, 0, -0.16, g);
     vmBox(0.05, 0.05, 0.2, vmMats.dark, 0, 0.03, -0.42, g);
     vmBox(0.06, 0.2, 0.07, vmMats.dark, 0, -0.14, -0.14, g);
     vmBox(0.04, 0.08, 0.04, vmMats.accent, 0, 0.1, -0.2, g);
+    vmBox(0.07, 0.11, 0.12, vmMats.dark, 0, -0.01, 0.06, g); // stock
+    vmBox(0.03, 0.04, 0.1, vmMats.dark, 0, 0.085, -0.3, g);  // top rail
+    vmBox(0.045, 0.045, 0.12, vmMats.dark, 0, 0.03, -0.52, g); // suppressor
   } else if (def.kind === 'sniper') {
     vmBox(0.08, 0.12, 0.52, vmMats.wood, 0, -0.01, -0.2, g);
     vmBox(0.04, 0.04, 0.5, vmMats.dark, 0, 0.03, -0.62, g);
     vmBox(0.07, 0.09, 0.2, vmMats.dark, 0, 0.11, -0.24, g); // scope tube
+    vmBox(0.05, 0.05, 0.06, vmMats.dark, 0, 0.11, -0.14, g); // scope bell
+    vmBox(0.07, 0.1, 0.14, vmMats.wood, 0, -0.02, 0.08, g);  // stock
+    vmBox(0.05, 0.16, 0.06, vmMats.dark, 0, -0.13, -0.18, g); // magazine
+    vmBox(0.03, 0.03, 0.08, vmMats.accent, 0, 0.03, -0.86, g); // muzzle brake
   } else {
     vmBox(0.08, 0.14, 0.46, vmMats.body, 0, 0, -0.18, g);
     vmBox(0.05, 0.05, 0.26, vmMats.dark, 0, 0.04, -0.5, g);
     vmBox(0.06, 0.2, 0.08, vmMats.dark, 0, -0.15, -0.16, g);
     vmBox(0.03, 0.09, 0.03, vmMats.accent, 0, 0.11, -0.3, g);
+    vmBox(0.07, 0.12, 0.13, vmMats.dark, 0, -0.01, 0.07, g); // stock
+    vmBox(0.03, 0.05, 0.12, vmMats.dark, 0, 0.09, -0.34, g); // top rail
+    vmBox(0.02, 0.04, 0.02, vmMats.accent, 0, 0.075, -0.56, g); // front post
+    vmBox(0.05, 0.03, 0.1, vmMats.wood, 0, -0.06, -0.3, g);  // handguard
   }
   return g;
 }

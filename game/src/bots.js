@@ -3,10 +3,14 @@
 // state machine per bot: route, hold, engage, plant, defuse, rotate, fetch.
 // Bots play by the player's rules — same movement physics, same spread model — their
 // skill lives in reaction time, aim error and burst discipline, not in cheats.
+// v2: bots now use the grenades they buy (smoke to cover a site execute, flash into
+// the site, smoke on the planted charge for a covered defuse), call out contacts and
+// gunfire on the radio so the team plays as a team, and take post-plant holds that
+// face the retake entries instead of standing on the bomb.
 
-import { G } from './state.js';
+import { G, pushFeed } from './state.js';
 import { MATCH } from './config.js';
-import { WAYPOINTS, SITES, SOLIDS, siteAt } from './map.js';
+import { WAYPOINTS, SITES, SOLIDS, RETAKE_ENTRIES, siteAt } from './map.js';
 import { moveActor, sightBlocked } from './physics.js';
 import { smokeBlocks, purchase, switchSlot } from './weapons.js';
 import { curGun, eyeHeight, chestHeight } from './actors.js';
@@ -89,6 +93,28 @@ function pathVia(sx, sz, via, tx, tz) {
   return a.concat(b.slice(1));
 }
 
+// ---- callouts ---------------------------------------------------------------------
+
+// Name the part of the yard a position sits in, for radio callouts and the HUD.
+export function areaName(x, z) {
+  const site = siteAt(x, z);
+  if (site) return site === 'A' ? 'SITE A' : 'SITE B';
+  if (x > 1 && x < 21 && z > -12 && z < 12) return 'FOUNDRY HALL';
+  if (z < -13) return 'RAIL LANE NORTH';
+  if (z > 13) return 'RAIL LANE SOUTH';
+  if (x < -38) return 'EMBERLINE SPAWN';
+  if (x > 38) return 'WARDEN SPAWN';
+  return 'MID';
+}
+
+// One grenade play a round per kind, per side of the plan: four bots all smoking the
+// same site would be noise, not tactics. A flag is spent only when the grenade
+// actually leaves the hand (executeNade sets it) — a plan that expires mid-fight
+// must not burn the round's one play. Reset in assignPlans.
+let roundSmoke = false;
+let roundFlash = false;
+let roundBombSmoke = false;
+
 // ---- brains -------------------------------------------------------------------------
 
 export function makeBrain(actor) {
@@ -103,6 +129,12 @@ export function makeBrain(actor) {
     strafeDir: 1, strafeT: 0, burstT: 0, burstOn: false,
     actionT: 0, plantReady: false, defuseDone: false,
     delay: 0, crouchHold: false,
+    callT: 0,            // radio rate limit: one callout per bot per 9 s
+    nadePlan: null,      // { kind, x, z, until } — a grenade throw queued by planGrenade
+    nadeT: 0,            // earliest time the bot may throw again
+    holsterNade: false,  // the throw went out last step: holster the grenade next step
+    smokeUsed: false, flashUsed: false,
+    plantedHold: false,  // post-plant hold already picked this round
   };
 }
 
@@ -124,6 +156,9 @@ function pointInSite(site, inset = 3) {
 // rail lane, one lurker late through mid); Wardens hold both sites and mid.
 export function assignPlans() {
   buildGraph();
+  roundSmoke = false;
+  roundFlash = false;
+  roundBombSmoke = false;
   const site = G.plan.site;
   const other = site === 'A' ? 'B' : 'A';
   const atk = G.actors.filter((a) => a.team === 'atk' && a.brain);
@@ -186,6 +221,11 @@ function resetBrain(b, a) {
   b.pathI = 0;
   b.faceYaw = a.yaw;
   b.crouchHold = false;
+  b.nadePlan = null;
+  b.holsterNade = false;
+  b.smokeUsed = false;
+  b.flashUsed = false;
+  b.plantedHold = false;
 }
 
 // ---- buying ---------------------------------------------------------------------------
@@ -227,6 +267,18 @@ function perceive(a, b) {
     if (!b.seen || b.seen.actor !== best) {
       b.seenSince = G.time;
       b.reactT = (0.26 + G.rand() * 0.16) / b.skill;
+      // Radio: first sighting of a new enemy is called out with the area, so the
+      // team hears the push before it hears the shots.
+      if (G.time > b.callT) {
+        let n = 0;
+        for (const e of G.actors) {
+          if (e === a || !e.alive || e.team === a.team) continue;
+          if (Math.hypot(e.pos.x - a.pos.x, e.pos.z - a.pos.z) < 40
+            && !sightBlocked(a.pos.x, a.pos.z, e.pos.x, e.pos.z)) n++;
+        }
+        pushFeed(`${a.name}: CONTACT ${areaName(best.pos.x, best.pos.z)} — ${Math.max(1, n)} HOSTILE${n > 1 ? 'S' : ''}`);
+        b.callT = G.time + 9;
+      }
     }
     b.seen = { actor: best, at: G.time, x: best.pos.x, z: best.pos.z };
   }
@@ -240,10 +292,88 @@ function perceive(a, b) {
       b.heard = { x: n.x, z: n.z, at: n.at, kind: n.kind };
       if (n.kind === 'shot' || n.kind === 'boom') {
         b.alertUntil = G.time + 6;
-        if (b.state === 'hold') b.faceYaw = Math.atan2(n.x - a.pos.x, n.z - a.pos.z);
+        if (b.state === 'hold') {
+          b.faceYaw = Math.atan2(n.x - a.pos.x, n.z - a.pos.z);
+          if (G.time > b.callT) {
+            pushFeed(`${a.name}: SHOTS ${areaName(n.x, n.z)} — HOLDING`);
+            b.callT = G.time + 9;
+          }
+        }
       }
     }
   }
+}
+
+// ---- grenade plays ----------------------------------------------------------------------
+
+// Bots bought grenades and never threw them. Now the plan spends them: attackers
+// smoke the site gate on the execute and flash the site as they enter; defenders
+// smoke the planted charge so the defuse happens under cover. One play per kind per
+// round (see the roundSmoke / roundFlash / roundBombSmoke flags), and a throw only
+// ever queues — stepBot aims and lobs it, and the bot is back on its gun next step.
+function planGrenade(a, b) {
+  if (b.nadePlan || G.time < b.nadeT) return;
+  if (a.team === 'atk' && !G.bomb.planted) {
+    const site = G.plan.site;
+    const s = SITES[site];
+    const dSite = Math.hypot(s.cx - a.pos.x, s.cz - a.pos.z);
+    if (!roundSmoke && !b.smokeUsed && a.nades.smoke > 0 && dSite < 26
+      && (b.state === 'route' || b.state === 'plant' || b.state === 'engage')) {
+      let covered = false;
+      for (const sm of G.smokes) {
+        if (Math.hypot(sm.x - s.cx, sm.z - s.cz) < 8) { covered = true; break; }
+      }
+      if (!covered) {
+        b.nadePlan = { kind: 'smoke', x: s.cx - 5, z: s.cz, until: G.time + 12 };
+        return;
+      }
+    }
+    if (!roundFlash && !b.flashUsed && a.nades.flash > 0 && dSite < 16
+      && (b.state === 'route' || b.state === 'plant' || b.state === 'engage')) {
+      b.nadePlan = { kind: 'flash', x: s.cx, z: s.cz, until: G.time + 12 };
+    }
+    return;
+  }
+  if (a.team === 'def' && G.bomb.planted) {
+    const dBomb = Math.hypot(G.bomb.x - a.pos.x, G.bomb.z - a.pos.z);
+    if (!roundBombSmoke && !b.smokeUsed && a.nades.smoke > 0 && dBomb < 22
+      && (b.state === 'rotate' || b.state === 'defuse' || b.state === 'hold' || b.state === 'engage')) {
+      b.nadePlan = { kind: 'smoke', x: G.bomb.x, z: G.bomb.z, until: G.time + 12 };
+    }
+  }
+}
+
+// Aim at the planned point and lob the grenade. Returns true once thrown.
+function executeNade(a, b) {
+  const plan = b.nadePlan;
+  if (!plan) return false;
+  if (G.time > plan.until) { b.nadePlan = null; return false; }
+  // The round's one play per kind is spent here, on the throw — not when the plan
+  // was made. A second bot that queued the same play meanwhile stands down.
+  if (plan.kind === 'smoke' && a.team === 'atk' && roundSmoke) { b.nadePlan = null; return false; }
+  if (plan.kind === 'flash' && roundFlash) { b.nadePlan = null; return false; }
+  if (plan.kind === 'smoke' && a.team === 'def' && roundBombSmoke) { b.nadePlan = null; return false; }
+  // The throw is mechanical only: not while the gun is cycling or reloading. A
+  // smoke thrown while an enemy is visible is the point — it breaks their line,
+  // and the bot is back on its gun by the next step.
+  if (a.fireT > 0 || a.reloadT > 0) return false;
+  const dx = plan.x - a.pos.x, dz = plan.z - a.pos.z;
+  const dist = Math.hypot(dx, dz);
+  a.yaw = Math.atan2(dx, dz);
+  // A lob: the throw speed is 13.5 m/s with +3.2 up, so pitch grows with distance.
+  a.pitch = Math.max(0.15, Math.min(0.55, 0.12 + dist * 0.014));
+  switchSlot(a, plan.kind);
+  if (a.slot !== plan.kind) { b.nadePlan = null; return false; } // no grenade left: never fire the gun instead
+  a.pressedFire = true;
+  if (plan.kind === 'smoke' && a.team === 'atk') roundSmoke = true;
+  if (plan.kind === 'flash') roundFlash = true;
+  if (plan.kind === 'smoke' && a.team === 'def') roundBombSmoke = true;
+  if (plan.kind === 'smoke') b.smokeUsed = true;
+  if (plan.kind === 'flash') b.flashUsed = true;
+  b.nadePlan = null;
+  b.nadeT = G.time + 8;
+  b.holsterNade = true; // the slot stays on the grenade until updateWeapons throws it
+  return true;
 }
 
 // ---- decisions ----------------------------------------------------------------------------
@@ -273,9 +403,25 @@ function decide(a, b) {
       return;
     }
     if (a.team === 'atk' && b.state !== 'hold' && !fresh) {
+      // Post-plant hold that faces a retake entry: stand off the bomb toward the
+      // gap the Wardens will come through, gun on the gap, not on the bomb.
+      if (!b.plantedHold) {
+        b.plantedHold = true;
+        const entries = RETAKE_ENTRIES[G.bomb.site];
+        let entry = entries[0], ed = Infinity;
+        for (const e of entries) {
+          const d = Math.hypot(e.x - a.pos.x, e.z - a.pos.z);
+          if (d < ed) { ed = d; entry = e; }
+        }
+        const dx = entry.x - G.bomb.x, dz = entry.z - G.bomb.z;
+        const dl = Math.hypot(dx, dz) || 1;
+        b.holdPos = { x: G.bomb.x + (dx / dl) * 5.5, z: G.bomb.z + (dz / dl) * 5.5 };
+        b.baseYaw = Math.atan2(entry.x - b.holdPos.x, entry.z - b.holdPos.z);
+        b.faceYaw = b.baseYaw;
+        b.goal = b.holdPos;
+        setPath(a, findPath(a.pos.x, a.pos.z, b.holdPos.x, b.holdPos.z));
+      }
       b.state = 'hold';
-      b.holdPos = { x: a.pos.x, z: a.pos.z };
-      b.baseYaw = Math.atan2(G.bomb.x - a.pos.x, G.bomb.z - a.pos.z) + Math.PI;
       return;
     }
   }
@@ -402,6 +548,24 @@ function stepBot(a, dt) {
     b.thinkT = 0.1;
     perceive(a, b);
     decide(a, b);
+    planGrenade(a, b);
+  }
+
+  // A queued grenade play runs before the state machine: the throw aims, lobs,
+  // and the bot is back on its gun by the next step. The slot is holstered here,
+  // one step AFTER the throw — updateWeapons runs after updateBots in the same
+  // step, so holstering in the throw's own step would take the grenade away
+  // before it is ever thrown and the bot would fire its gun instead.
+  if (b.holsterNade && !b.nadePlan) {
+    if (a.slot === 'frag' || a.slot === 'flash' || a.slot === 'smoke') {
+      switchSlot(a, 'primary');
+      if (a.slot === 'frag' || a.slot === 'flash' || a.slot === 'smoke') switchSlot(a, 'sidearm');
+    }
+    b.holsterNade = false;
+  }
+  if (b.nadePlan) {
+    executeNade(a, b);
+    if (b.holsterNade) return; // just threw: hold the pose this one step
   }
 
   if (a.blindT > 0.4) {

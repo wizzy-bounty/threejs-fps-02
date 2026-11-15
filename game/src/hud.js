@@ -1,13 +1,15 @@
-// hud.js — every DOM element of the HUD: top bar (score, timer, round), health and
-// armour, money and ammunition, a crosshair that breathes with the spread model, the
-// kill feed, banners, the buy menu, the Tab scoreboard and the full-screen effects
-// (damage vignette, flash blindness, sniper scope). updateHud runs once per rendered
-// frame and only touches the DOM when a value actually changed.
+// hud.js — every DOM element of the HUD: top bar (score, timer, round), a compass
+// strip with the two sites, an objective chip that always says what this round
+// wants, health and armour, money and ammunition, a crosshair that breathes with
+// the spread model, the kill feed, banners, the buy menu, the Tab scoreboard and
+// the full-screen effects (damage vignette, flash blindness, sniper scope).
+// updateHud runs once per rendered frame and only touches the DOM when a value
+// actually changed.
 
 import { G } from './state.js';
 import { MATCH, TEAMS, WEAPONS, GRENADES } from './config.js';
 import { curGun } from './actors.js';
-import { siteAt } from './map.js';
+import { siteAt, SITES } from './map.js';
 import { playerBuy } from './rounds.js';
 import { down } from './input.js';
 
@@ -16,6 +18,8 @@ let buyOpen = false;
 let feedSig = '';
 let buySig = '';
 let boardSig = '';
+let compassSig = '';
+let objectiveSig = '';
 
 const BUY_CATALOG = [
   { id: 'kestrel', key: '1' }, { id: 'carbine', key: '2' }, { id: 'longshot', key: '3' },
@@ -52,7 +56,8 @@ export function initHud() {
     'ammo-mag', 'ammo-res', 'wep-name', 'money', 'crosshair', 'hitmarker', 'feed', 'banner',
     'banner-title', 'banner-sub', 'buy', 'buy-grid', 'buy-money', 'board', 'board-body',
     'vignette', 'flashfx', 'scopefx', 'interact', 'interact-label', 'interact-fill',
-    'bombind', 'bombind-fill', 'bombind-label', 'carrier']) {
+    'bombind', 'bombind-fill', 'bombind-label', 'carrier', 'compass-marks',
+    'objective']) {
     el[id] = document.getElementById(id);
   }
   el['buy-grid'].innerHTML = '';
@@ -111,6 +116,87 @@ export function toggleBuy() {
   setBuyOpen(!buyOpen);
 }
 
+// ---- compass + objective --------------------------------------------------------
+
+// The yaw that faces each cardinal: forward is (sin yaw, cos yaw), so north (-z)
+// is yaw PI, east (+x) PI/2, south (+z) 0, west (-x) -PI/2.
+const CARDINALS = [
+  ['N', Math.PI], ['NE', Math.PI * 0.75], ['E', Math.PI / 2], ['SE', Math.PI / 4],
+  ['S', 0], ['SW', -Math.PI / 4], ['W', -Math.PI / 2], ['NW', -Math.PI * 0.75],
+];
+const COMPASS_HALF = 1.05; // radians either side of facing that the strip shows
+
+function wrapPi(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+function compassMark(left, cls, text) {
+  return `<span class="${cls}" style="left:${left.toFixed(1)}%">${text}</span>`;
+}
+
+function refreshCompass() {
+  const p = G.player;
+  const yaw = Math.round(p.yaw * 50) / 50;
+  const px = Math.round(p.pos.x * 2) / 2;
+  const pz = Math.round(p.pos.z * 2) / 2;
+  const sig = `${yaw}|${px}|${pz}|${G.phase}`;
+  if (sig === compassSig) return;
+  compassSig = sig;
+  const marks = [];
+  const siteMarks = [];
+  for (const key of ['A', 'B']) {
+    const s = SITES[key];
+    const rel = wrapPi(Math.atan2(s.cx - p.pos.x, s.cz - p.pos.z) - p.yaw);
+    if (Math.abs(rel) > COMPASS_HALF) continue;
+    const left = 50 + (rel / COMPASS_HALF) * 50;
+    const dist = Math.round(Math.hypot(s.cx - p.pos.x, s.cz - p.pos.z));
+    siteMarks.push({ left, html: compassMark(left, `site site-${key.toLowerCase()}`, `${key} ${dist}m`) });
+  }
+  for (const [label, bearing] of CARDINALS) {
+    const rel = wrapPi(bearing - p.yaw);
+    if (Math.abs(rel) > COMPASS_HALF) continue;
+    const left = 50 + (rel / COMPASS_HALF) * 50;
+    // A site marker wins its slot: a cardinal tick printed over it reads as noise.
+    // The marker text ("A 15m") is wide, so the exclusion covers its half-width.
+    if (siteMarks.some((m) => Math.abs(m.left - left) < 9)) continue;
+    marks.push(compassMark(left, 'tick', label));
+  }
+  marks.push(...siteMarks.map((m) => m.html));
+  el['compass-marks'].innerHTML = marks.join('');
+}
+
+function objectiveText() {
+  if (G.phase === 'matchover') return '';
+  if (G.phase === 'buy') {
+    const site = G.plan?.site;
+    return site ? `BUY PHASE — PLAN: HIT SITE ${site} · ${SITES[site].name}` : 'BUY PHASE — GEAR UP';
+  }
+  if (G.bomb.planted) return `CHARGE PLANTED — HOLD SITE ${G.bomb.site} · ${SITES[G.bomb.site].name}`;
+  if (G.phase === 'live' || G.phase === 'planted') {
+    if (G.bomb.carrier === G.player) {
+      return siteAt(G.player.pos.x, G.player.pos.z)
+        ? 'YOU CARRY THE CHARGE — HOLD E TO PLANT'
+        : 'YOU CARRY THE CHARGE — PLANT AT SITE A OR B';
+    }
+    if (G.bomb.carrier) {
+      const site = G.plan?.site;
+      return `${G.bomb.carrier.name.toUpperCase()} CARRIES THE CHARGE — PUSH SITE ${site || '?'}`;
+    }
+    return 'RECOVER THE CHARGE — THEN PLANT AT A OR B';
+  }
+  return '';
+}
+
+function refreshObjective() {
+  const text = objectiveText();
+  if (text === objectiveSig) return;
+  objectiveSig = text;
+  el.objective.hidden = !text;
+  el.objective.textContent = text;
+}
+
 export function updateHud() {
   const p = G.player;
   if (!p) return;
@@ -119,6 +205,8 @@ export function updateHud() {
   if (buyOpen) refreshBuy();
   el.board.hidden = !down.has('Tab');
   if (!el.board.hidden) refreshBoard();
+  refreshCompass();
+  refreshObjective();
 
   el['score-atk'].textContent = G.score.atk;
   el['score-def'].textContent = G.score.def;

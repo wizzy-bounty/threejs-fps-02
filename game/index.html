@@ -37,6 +37,16 @@
   #timer.danger { color: #ff5a3c; }
   #round-label { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); }
 
+  /* compass + objective */
+  #compass { position: fixed; top: 82px; left: 50%; transform: translateX(-50%); width: 340px; height: 24px; background: var(--panel); border: 1px solid var(--hairline); border-radius: 5px; overflow: hidden; font-family: var(--font-readout); font-size: 11px; }
+  #compass-marks { position: absolute; inset: 0; }
+  #compass-marks .tick { position: absolute; top: 5px; transform: translateX(-50%); color: var(--muted); }
+  #compass-marks .site { position: absolute; top: 5px; transform: translateX(-50%); font-weight: 700; }
+  #compass-marks .site-a { color: var(--amber); }
+  #compass-marks .site-b { color: #d9a441; }
+  #compass::after { content: ''; position: absolute; left: 50%; top: 0; transform: translateX(-50%); border: 5px solid transparent; border-top: 6px solid var(--amber); }
+  #objective { position: fixed; top: 114px; left: 50%; transform: translateX(-50%); font-family: var(--font-readout); font-size: 12px; letter-spacing: 0.1em; color: var(--amber); background: var(--panel); padding: 5px 14px; border-radius: 4px; white-space: nowrap; }
+
   /* bottom left: health */
   #vitals { position: fixed; left: 26px; bottom: 22px; width: 240px; }
   #hp-track { height: 10px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; }
@@ -68,7 +78,7 @@
   /* kill feed + banner + carrier note */
   #feed { position: fixed; right: 26px; top: 76px; text-align: right; font-family: var(--font-readout); font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
   #feed div { background: var(--panel); padding: 4px 10px; border-radius: 4px; }
-  #banner { position: fixed; top: 96px; left: 50%; transform: translateX(-50%); text-align: center; }
+  #banner { position: fixed; top: 152px; left: 50%; transform: translateX(-50%); text-align: center; }
   #banner-title { font-size: 34px; font-weight: 700; letter-spacing: 0.06em; text-shadow: 0 2px 14px rgba(0,0,0,0.7); }
   #banner-sub { font-size: 15px; color: var(--muted); letter-spacing: 0.08em; }
   #carrier { position: fixed; bottom: 118px; left: 50%; transform: translateX(-50%); font-family: var(--font-readout); font-size: 14px; letter-spacing: 0.1em; color: var(--amber); background: var(--panel); padding: 6px 14px; border-radius: 4px; }
@@ -135,6 +145,9 @@
     <div class="cell"><div id="timer">0:00</div><div id="round-label">ROUND 1</div></div>
     <div class="cell"><div class="team">WARDENS</div><div class="big" id="score-def">0</div></div>
   </div>
+
+  <div id="compass"><div id="compass-marks"></div></div>
+  <div id="objective" hidden></div>
 
   <div id="vitals">
     <div id="hp-track"><div id="hp-fill"></div></div>

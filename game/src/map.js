@@ -105,6 +105,13 @@ export function siteAt(x, z) {
   return null;
 }
 
+// Retake entries: the gaps a defending team funnels through once the charge is
+// planted. Bots use them for post-plant holds; the ground painter marks them too.
+export const RETAKE_ENTRIES = {
+  A: [{ x: 30, z: -16 }, { x: 36, z: -31 }, { x: 47, z: -20 }],
+  B: [{ x: 30, z: 16 }, { x: 36, z: 31 }, { x: 47, z: 20 }],
+};
+
 // Spawn points: five a side, everyone facing the middle of the yard.
 export const SPAWNS = {
   atk: [
@@ -144,6 +151,9 @@ function mat(color) {
 // The ground is one big canvas: ash concrete with speckle, the two rail tracks drawn
 // as steel lines over sleeper ticks, painted site circles with their letters, and a
 // stencilled yard name at the attacker spawn. Drawn once, no image files.
+// v2: the yard now reads at a glance — oil stains and cracks break the flat brown,
+// dashed lane lines lead the eye down the two rail approaches, and hazard chevrons
+// mark both site gates so the objective reads from across the map.
 function groundTexture() {
   const W = 1664, H = 1152; // 16 px per metre over 104 x 72 m
   const cv = document.createElement('canvas');
@@ -159,8 +169,39 @@ function groundTexture() {
     g.fillStyle = rnd() > 0.5 ? 'rgba(0,0,0,0.10)' : 'rgba(255,240,210,0.05)';
     g.fillRect(rnd() * W, rnd() * H, 2.4, 2.4);
   }
-  g.fillStyle = 'rgba(0,0,0,0.13)';
-  g.fillRect(0, pz(-13), W, pz(13) - pz(-13)); // worn apron in front of the hall
+  // Oil stains: dark soft ellipses where the yard has worked for years.
+  for (let i = 0; i < 42; i++) {
+    const cx = rnd() * W, cy = rnd() * H, rx = 14 + rnd() * 46, ry = 10 + rnd() * 30;
+    g.fillStyle = `rgba(20,16,12,${0.10 + rnd() * 0.14})`;
+    g.beginPath();
+    g.ellipse(cx, cy, rx, ry, rnd() * Math.PI, 0, Math.PI * 2);
+    g.fill();
+  }
+  // Cracks: short dark random walks in the concrete.
+  g.strokeStyle = 'rgba(28,22,16,0.35)';
+  for (let i = 0; i < 22; i++) {
+    let cx = rnd() * W, cy = rnd() * H;
+    g.lineWidth = 1.4 + rnd() * 1.2;
+    g.beginPath();
+    g.moveTo(cx, cy);
+    for (let k = 0; k < 6; k++) {
+      cx += (rnd() - 0.5) * 46;
+      cy += (rnd() - 0.5) * 46;
+      g.lineTo(cx, cy);
+    }
+    g.stroke();
+  }
+  // Patches of darker worn concrete around the hall apron and the sites.
+  g.fillStyle = 'rgba(0,0,0,0.10)';
+  g.fillRect(px(-2), pz(-13), px(24) - px(-2), pz(13) - pz(-13)); // worn apron in front of the hall
+  g.fillStyle = 'rgba(0,0,0,0.08)';
+  g.beginPath(); g.arc(px(39), pz(-23), 150, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(px(39), pz(23), 150, 0, Math.PI * 2); g.fill();
+  // Dashed lane lines down the two rail approaches, so the push lanes read.
+  g.fillStyle = 'rgba(217,201,163,0.42)';
+  for (const lz of [-25, 25]) {
+    for (let x = -48; x < 28; x += 4.5) g.fillRect(px(x), pz(lz) - 2, 26, 4);
+  }
   // Rail tracks at z = -19 and z = 19: sleepers first, then the two steel lines.
   for (const tz of [-19, 19]) {
     g.fillStyle = '#4c3b2c';
@@ -168,6 +209,22 @@ function groundTexture() {
     g.fillStyle = '#2c2a26';
     g.fillRect(0, pz(tz) - 13, W, 4);
     g.fillRect(0, pz(tz) + 9, W, 4);
+  }
+  // Hazard chevrons across both site gates: amber/black diagonals.
+  for (const [gz, col] of [[-15.2, '#c98a2e'], [15.2, '#c98a2e']]) {
+    g.save();
+    g.beginPath();
+    g.rect(px(30), pz(gz) - 8, px(34) - px(30), 16);
+    g.clip();
+    for (let i = -2; i < 8; i++) {
+      g.fillStyle = i % 2 ? '#c98a2e' : '#1d1a16';
+      g.save();
+      g.translate(px(30) + i * 14, pz(gz));
+      g.rotate(Math.PI / 4);
+      g.fillRect(-5, -22, 10, 44);
+      g.restore();
+    }
+    g.restore();
   }
   // Site circles and letters.
   for (const [key, col] of [['A', '#b0512f'], ['B', '#c49a58']]) {
@@ -199,6 +256,61 @@ function box(w, h, d, color, x, y, z) {
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
+}
+
+// A tall site pylon: a steel post with a lit letter board, so each site is a
+// landmark you can read from the far side of the yard. The board is unlit
+// (MeshBasicMaterial) on purpose — it stays legible in the dusk.
+function sitePylon(scene, key, x, z, color) {
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 6.4, 0.3), mat(PALETTE.steelDark));
+  post.position.y = 3.2;
+  post.castShadow = true;
+  g.add(post);
+  const cv = document.createElement('canvas');
+  cv.width = 128; cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#14161a';
+  c.fillRect(0, 0, 128, 128);
+  c.strokeStyle = color;
+  c.lineWidth = 6;
+  c.strokeRect(5, 5, 118, 118);
+  c.fillStyle = color;
+  c.font = 'bold 84px system-ui, sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(key, 64, 68);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const board = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 2.6),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }),
+  );
+  board.position.y = 7.2;
+  g.add(board);
+  g.position.set(x, 0, z);
+  scene.add(g);
+}
+
+// A lamp post: dark steel pole, arm, and a warm glowing head. The light itself is
+// one of the three point lights main.js places; the head just shows where it comes from.
+function lampPost(scene, x, z, armDir) {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 5.2, 8), mat(PALETTE.charcoal));
+  pole.position.y = 2.6;
+  pole.castShadow = true;
+  g.add(pole);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.09, 0.09), mat(PALETTE.charcoal));
+  arm.position.set(armDir * 0.7, 5.15, 0);
+  g.add(arm);
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffd9a0 }),
+  );
+  head.position.set(armDir * 1.4, 5.05, 0);
+  g.add(head);
+  g.position.set(x, 0, z);
+  scene.add(g);
 }
 
 export function buildMap(scene) {
@@ -267,6 +379,15 @@ export function buildMap(scene) {
     barrel.castShadow = true;
     scene.add(barrel);
   }
+
+  // Site pylons: lit A/B landmarks on each site's east edge, and lamp posts along
+  // the hall apron so the mid lanes read at dusk. The pylons sit east on purpose:
+  // the plant and round-end cameras look in from the west gate, and a pylon on
+  // the gate would stand in the frame instead of marking the site.
+  sitePylon(scene, 'A', 47, -23, '#e8873a');
+  sitePylon(scene, 'B', 47, 23, '#d9a441');
+  lampPost(scene, -8, -9.5, 1);
+  lampPost(scene, 14, 12.5, -1);
 
   // Distant skyline: dark foundry silhouettes beyond the fence, and a crane.
   const far = [[70, -20, 16, 22], [74, 14, 12, 30], [-72, -8, 14, 18], [-70, 22, 10, 26], [30, -58, 26, 16], [-26, 56, 22, 14], [64, 44, 18, 20]];
